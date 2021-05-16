@@ -6,25 +6,91 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# Load Packages
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(ggmap)
+library(zoo)
 ```
 
-## R Markdown
+### Activity Tracker Data - How hight difference affects running speed
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+This report shows how hight difference affects the running speed of a person using acitivty data of a sports
+tracker. 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Read and explore data
 
-```{r cars}
-summary(cars)
+```{r, echo=TRUE}
+# Which layer needed
+st_layers("activity_6531531145.gpx") # track_points needed
+
+# Read data:
+p = read_sf("activity_6531531145.gpx", layer = "track_points")
+
+# Convert to CH1903+ LV95
+p <- st_transform(p, crs = 2056)
+
+# When was the measurement?
+summary(p$time)
+plot(p$time)
+
 ```
 
-## Including Plots
+The duration of the activity was `r max(p$time) - min(p$time)` hours.
 
-You can also embed plots, for example:
+## Calculate timelag, steplength, speed and hight difference
+Time lag is measured in seconds, euclidian steplength in meters, speed in km/h and hight difference in meters.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+# Timelag
+```{r, echo=TRUE}
+# Timelag
+p$timelag <- as.integer(difftime(lead(p$time), p$time, units = "secs"))
+summary(p$timelag)
+ggplot(p, aes(x = timelag)) +
+  geom_histogram(binwidth = 1) +
+  theme_bw()
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Time difference is between `r min(p$timelag, na.rm = TRUE)` and `r max(p$timelag, na.rm = TRUE)` seconds. 
+
+# Euclidian distance
+```{r, echo=TRUE}
+# Euclidian distance
+options(digits=2)
+cords <- st_coordinates(p$geometry)
+
+p$E <- cords[,1]
+p$N <- cords[,2]
+
+p$steplength <- sqrt(
+  (p$E - lead(p$E))^2 + (p$N - lead(p$N))^2
+)
+
+```
+
+The total distance tracked was `r as.integer(sum(p$steplength, na.rm = TRUE))` meters. 
+
+# Speed
+```{r, echo=TRUE}
+# Speed
+p$speed_ms <- (p$steplength / p$timelag)
+p$speed_kmh <- (p$speed_ms * 3.6)
+
+
+p$speed_kmh_smooth_03 <- rollmean(p$speed_kmh, k = 3, fill = NA, allign = "left")
+p$speed_kmh_smooth_05 <- rollmean(p$speed_kmh, k = 5, fill = NA, allign = "left")
+p$speed_kmh_smooth_10 <- rollmean(p$speed_kmh, k = 10, fill = NA, allign = "left")
+
+p %>%
+  gather(k, Geschwindigkeit, speed_kmh : speed_kmh_smooth_10) %>%
+  ggplot(aes(time, Geschwindigkeit, col = k)) +
+  geom_line() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  labs(title = "Speed diagram\n", x = "\ntime [hh:mm]", y = "speed [kmh]\n" )
+
+```
+
+Speed strongly depends on the used k-value in rollmeans. 
+
