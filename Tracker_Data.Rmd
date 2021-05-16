@@ -89,8 +89,106 @@ p %>%
   theme_bw() +
   theme(legend.position = "bottom") +
   labs(title = "Speed diagram\n", x = "\ntime [hh:mm]", y = "speed [kmh]\n" )
+```
+
+Speed strongly depends on the used k-value in rollmeans. We use k = 5 for the following results.
+
+```{r, echo=TRUE}
+p %>%
+  ggplot(aes(time, speed_kmh_smooth_03)) +
+  geom_line(col = "blue") +
+  theme_bw() +
+  labs(title = "Speed diagram\n", x = "\ntime [hh:mm]", y = "speed [kmh]\n" )
+```
+
+# Hight difference
+```{r, echo=TRUE}
+p$hightdiff <- lead(p$ele) - p$ele
+ggplot(p, aes(time, hightdiff)) +
+  geom_line()
+```
+
+Hight difference of every timestep seems to be not accurate => See Plot!
+We have to analyse bigger timeframes!
+
+```{r, echo=TRUE}
+p$hightdiff <- ifelse(abs(p$hightdiff) > 2, NA, p$hightdiff)
+```
+
+# Show the Track on a map
+```{r, echo=FALSE}
+# Track
+ggplot(p, aes(E, N, col = speed_kmh_smooth_03)) +
+  geom_path() +
+  geom_point() + 
+  scale_color_gradient(low = "red", high = "yellow")
+
+a <- st_transform(p, crs = 4326)
+
+acords <- cords <- st_coordinates(a$geometry)
+a$E <- acords[,1]
+a$N <- acords[,2]
+
+
+# Show the track on a map:
+myLocation<-c(min(a$E)-.01, min(a$N)-.01, max(a$E)+.01, max(a$N)+.01)
+myMap <- get_stamenmap(bbox=myLocation, maptype="terrain", crop=TRUE, zoom = 13)
+ggmap(myMap) +
+  geom_point(data = a, aes(E,N, col = speed_kmh_smooth_03)) +
+  labs(title = paste(date(a$time), "Trailrunning"),
+       x = "\n°E", y = "°N\n") +
+    scale_color_gradient(low = "red", high = "yellow")
+
+ggmap(myMap) +
+  geom_point(data = a, aes(E,N, col = hightdiff)) +
+  labs(title = paste(date(a$time), "Trailrunning"),
+       x = "\n°E", y = "°N\n") +
+    scale_color_gradient(low = "yellow", high = "red")
+
 
 ```
 
-Speed strongly depends on the used k-value in rollmeans. 
+As the two figures above show, the speed seems to be strongly correlated with the hight difference!
 
+## Correlation of speed and hight difference
+# Group the relevant data into intervals of 1 minute
+```{r, echo=TRUE}
+mins <- a %>%
+  st_drop_geometry() %>%
+  select(time, steplength, hightdiff) %>%
+  group_by("time" = cut(time, "1 min")) %>%
+  summarise(steplength = sum(steplength, na.rm = T),
+            hightdiff_up = sum(hightdiff > 0),
+            hightdiff_down = sum(hightdiff < 0),
+            speed = steplength / 60 * 3.6)
+
+mins$speed <- ifelse(mins$speed < 3, NA, mins$speed)
+
+sum(mins$hightdiff_up, na.rm = T)
+sum(mins$hightdiff_down, na.rm = T)
+  
+```
+
+# Show heightdifference vs speed
+```{r, echo=FALSE}
+mins_long <- gather(mins, updown, hightdiff, hightdiff_up : hightdiff_down)
+
+ggplot(mins_long, aes(hightdiff, speed, col = updown)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_bw() +
+  labs(x = "\n hight difference", y = "speed\n")
+```
+
+
+# Calculate a simple linear model of speed and hight difference
+```{r, echo=FALSE}
+cor(mins$speed, mins$hightdiff_up, use = "pairwise.complete.obs")
+lm_up <- lm(mins$speed~mins$hightdiff_up)
+summary(lm_up)
+```
+
+Interpretation of the results: The speed is strongly correlated with the hight difference (up)
+with a correlation coefficient of `cor(mins$speed, mins$hightdiff_up, use = "pairwise.complete.obs")`
+and an adjusted R-squared of 0.68. The gorrelation is highly significant with p < 0.001.
+       
